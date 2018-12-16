@@ -1,0 +1,423 @@
+---
+title: "Data Preparation for LTER data product"
+author: "Peter M.J. Herman"
+date: "12 december 2018"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+## General purpose
+
+This data product discloses the data collected in the framework of the LTER (Long Term Ecological Research) site in the northern Adriatic, close to Trieste. A time series has been built of observations on the species composition of the plankton.
+
+### Data series
+The plankton series from the LTER site in the Northern Adriatic comprises three datasets in EMODnet biology: the phytoplankton series was started in 1986 and is continued until present. 
+Results of the Microzooplankton series and Mesozooplankton series are available between 1998 and 2005. However, due to taxonomic problems, these datasets are currently not used. Also for the phytoplankton, uncertainty and changes over time in the identification at species level has led to the decision to present species grouped into genera as the lowest taxonomic level.
+
+The phytoplankton dataset can be retrieved from EMODNET biology. Its description reads "Phytoplankton North Adriatic-Gulf of Trieste LTER time-series". Downloads are possible through the data portal toolbox. We used abundance data only, as biomass is incomplete.
+
+The phytoplankton series is described in: 
+
+M. Cabrini, D. Fornasaro, G. Cossarini, M. Lipizer, D. Virgilio. 2012. Phytoplankton temporal changes in a coastal northern Adriatic site during the last
+25 years. Estuarine, Coastal and Shelf Science 115: 113-124
+
+We refer to this paper for all details concerning sampling and working up of samples.
+
+### Data product
+We show the evolution over time of depth-averaged abundance of major groups of species, as well as the most frequent genera in the dataset. A frequency limit has been set to those groups and genera that have at least 20 occurrences during the course of the time series. The major groups are defined at the Class level. In the major groups, all species belonging to the group have been summed, also including the rare species that are not shown as separate species in the product.
+
+In the Yearly series, we have averaged all data per year and present the results as box plots. When transformation is used (double square root transformation is offered), transformation has preceded the calculation of the box plots.
+
+The Monthly series shows the average (over the years) monthly pattern of occurrence of the species or group. No distinction between several periods has been made.
+
+the Multivariate representation of phytoplankton is based on a PCA of double square-root transformed genus abundances of the most frequent genera (the same genus set that is shown in the time series). We present a biplot of samples and genera, but we have grouped samples (and present centroids) in two different ways: per year and per season. This allows to show the long-term trend as a shift in yearly centroid (in red), and the seasonal fluctuation as variation between months (in blue). Both trends are at right angles in the biplot, suggesting little correlation between the seasonal and long-term fluctuations. The biplot further shows the scores of the genera as arrows from the origin. The genera selected and used to show yearly and monthly temporal variation, is/are highlighted in green in this graph. Upon selection of a new group or genus, this highlighting is dynamically adapted. Thus, the multivariate graph shows how the selected group or genus contributes to the temporal evolution of the community on long-term and seasonal scales.
+
+## Data preparation code
+
+Data were downloaded in late 2017 as two separate data files, one with the occurrences and one with the 'measurements or facts'. We derive abundance data from the latter. In the more recent version of the data download toolbox it is possible to combine this into one downloaded file.
+
+The two downloaded .csv files were renamed into 'Phytoplankton_downloaded_basic.csv' and 'Phytoplankton_downloaded_mf.csv' respectively. These data files are made available on the Github repository.
+
+The following code shows the data preparation steps. It makes use of the package taxize to look up species taxonomic classification in WoRMS. This is a time consuming step. The steps in the data treatment are explained in comment statements within the code. Note that the first code chunk is not executed in the Markdown file, as it is slow and results in binary data files that are available on the Github repository. Also the pdf with yearly plots is available there.
+
+```{r data_preparation, eval=FALSE}
+
+######################  NEEDED PACKAGES ########################################
+library(reshape)
+library(taxize)
+################################################################################
+# FUNCTION TO READ IN BASIC DATA AND MEASUREMENT OR FACT DATA, AND MERGE THEM
+################################################################################
+assembleset<-function(filenambase){
+  ds<-read.csv(paste(filenambase,"_basic.csv",sep=''),header=T,stringsAsFactors=F)
+  droplist<-c(1,2,3,10,13,14,17,18)
+  ds<-ds[,-droplist]
+  dsmf<-read.csv(paste(filenambase,"_mf.csv",sep=""),header=T,stringsAsFactors=F)
+  droplist<-c(1,2,4,7:12)
+  dsmf<-dsmf[,-droplist]
+  # correct for single r in occurencid of phytomf (not of phyto)
+  names(dsmf)<-c("occurrenceid","measurementtype","measurementvalue")
+  dsmfc<-cast(data=dsmf,formula=occurrenceid ~ measurementtype,
+              value="measurementvalue")
+  dsf<-merge(ds,dsmfc,by="occurrenceid")
+  dsf$date<-as.Date(paste(dsf$yearcollected,"-",dsf$monthcollected,"-",
+                          dsf$daycollected,sep=""),format="%Y-%m-%d")
+  dsf<-dsf[order(dsf$date,dsf$scientificname_accepted),]
+  return(dsf)
+}
+#####################  APPLY FUNCTION TO PHYTOPLANKTON DATA  ###################
+phyto<-assembleset("Phytoplankton_downloaded")
+#######drop records without Abundance, and drop biomass values##################
+phyto<-phyto[!is.na(phyto$Abundance),]
+bc<-which(names(phyto)=="Biomass")
+phyto<-phyto[,-bc]
+################### look up classification of all species  #####################
+aidlist<-unique(phyto$aphiaidaccepted)
+apcl<-classification(aidlist,db="worms")
+save(apcl,file="phyto_apcl.Rdata")
+##################  make data frame of results  ################################
+txtr<-data.frame(aphiaidaccepted=aidlist,Kingdom=NA,Subkingdom=NA,
+                 Infrakingdom=NA,Phylum=NA,Subphylum=NA,Infraphylum=NA,
+                 Superclass=NA,Class=NA,Subclass=NA,Superorder=NA,Order=NA,
+                 Suborder=NA,Family=NA,Subfamily=NA,Genus=NA,Species=NA)
+for (i in 1:length(aidlist)){
+  for (j in 1:length(apcl[[i]]$rank)){
+    txtr[i,apcl[[i]]$rank[j]]<-apcl[[i]]$name[j]
+  }
+}
+################################################################################
+# remove Plantae (too uncertain to keep) and Protista (doubts on validity)    ##
+# these are the only entries where Class is not available ######################
+################################################################################
+txtr<-txtr[!is.na(txtr$Class),]
+################################################################################
+# make a 'displayName' field that contains species name or lowest higher 
+# taxon + ' indet.'
+################################################################################
+txtr$displayName<-txtr$Species
+for (i in 1:length(txtr[,1])){
+  if(is.na(txtr$Species[i])){
+      j<-max(which(!is.na(txtr[i,1:17])))
+      txtr$displayName[i]<-paste(txtr[i,j],"indet.")
+    }
+}
+################################################################################
+# make a 'displayGenus' field that contains genus name or lowest higher taxon
+################################################################################
+txtr$displayGenus<-txtr$Genus
+for (i in 1:length(txtr[,1])){
+  if(is.na(txtr$Genus[i])){
+    j<-max(which(!is.na(txtr[i,1:17])))
+    txtr$displayGenus[i]<-paste(txtr[i,j],"indet.")
+  }
+}
+################################################################################
+# make a 'displayClass' field that contains class to be used in analyses
+################################################################################
+txtr$displayClass<-txtr$Class
+################################################################################
+# only keep aphiaidaccepted, Class, displayName, displayGenus and 
+# displayClass in the file
+################################################################################
+txtr<-txtr[,-c(2:8,10:17)]
+################################################################################
+# merge taxonomic information with data. This will automatically delete 
+# records for which taxonomic information has been deleted (Plantae, Protista)
+################################################################################
+phyto<-merge(phyto,txtr,by="aphiaidaccepted")
+################################################################################
+# average over depth samples
+################################################################################
+########### determine number of depth slices per sample ########################
+ndps<-cast(phyto,date~.,value='minimumdepth',fun=function(x) length(unique(x)))
+names(ndps)[2]<-'ndps'
+phyto<-merge(phyto,ndps,by='date')
+################################################################################
+########## divide 'Abundance' field by number of depth slices ##################
+########## (to be summed afterwards, yielding the mean) ########################
+################################################################################
+phyto$Abundance<-phyto$Abundance/phyto$ndps
+############ sum over depth slices to yield plankt again #######################
+phyto<-cast(phyto,date+yearcollected+monthcollected+daycollected+
+              aphiaidaccepted+scientificname_accepted+displayName+
+              displayGenus+displayClass+ndps~.,
+              value="Abundance",fun=sum)
+names(phyto)[length(names(phyto))]<-"Abundance"
+################################################################################
+## end of tuning basic data table ##############################################
+## phyto now contains depth-averaged abundances  ###############################
+################################################################################
+
+################################################################################
+########## group by genus and save in PhytoGenus################################
+################################################################################
+
+###################  Summing per class #########################################
+tt<-cast(phyto,formula=date+yearcollected+monthcollected+daycollected+ndps~
+           displayClass,value='Abundance',fun=sum)
+###################  Summing per genus #########################################
+tt2<-cast(phyto,formula=date+yearcollected+monthcollected+daycollected+ndps~
+            displayGenus,value='Abundance',fun=sum,margins='grand_col')
+###################  combining both  ###########################################
+ttt<-merge(tt,tt2,by=c('date','yearcollected','monthcollected',
+                       'daycollected','ndps'))
+ldc<-5
+ngens<-length(ttt[1,])-ldc
+###################  frequency of observation per species  #####################
+no<-apply(ttt[,(ldc+1):(ldc+ngens)],2,function(x) length(x[x>0]))
+####### remove all genera from tt that have less than 20 observations  #########
+ll<-which(no<20)+ldc
+ttt<-ttt[,-ll]
+ngens<-length(ttt[1,])-ldc
+############### store in PhytoGenus ############################################
+PhytoGenus<-ttt
+names(PhytoGenus)[1:ldc]<-c("datecollected","YearCollected","MonthCollected",
+                               "DayCollected","ndps")
+save(PhytoGenus,txtr,file="PhytoGenus.Rdata")
+################################################################################
+
+################################################################################
+####### diagnostic: plot yearly averages of groups in pdf file #################
+################################################################################
+pdf('phyto_genera_and_groups_per_year.pdf')
+ttt<-PhytoGenus
+txf<-unique(ttt$YearCollected)
+mitxf<-min(as.numeric(txf))
+matxf<-max(as.numeric(txf))
+for (spec in 1:ngens){
+  xf<-as.factor(ttt$YearCollected)
+  xv<-as.numeric(xf)
+  yv<-ttt[,spec+ldc]
+  yv<-as.numeric(yv)
+  yv<-sqrt(sqrt(yv))
+  mt<-names(ttt)[spec+ldc]
+  plot(xf,yv,main=mt,type="b",ylab='sqrt(sqrt(Abundance))',
+       col=c(rep('lightgrey',16),rep('darkgrey',11)))
+}
+dev.off()
+################################################################################
+############# done! ############################################################
+################################################################################
+```
+
+## Multivariate analysis
+We performed a multivariate analysis of the abundance data of the genera, as explained in the introduction. The following code shows how this analysis was performed.
+
+```{r multiv_genus}
+################################################################################
+##################  packages  ##################################################
+################################################################################
+library(ade4)
+library(reshape)
+################################################################################
+######## read data, reshuffle, transform  ######################################
+################################################################################
+load("PhytoGenus.Rdata")
+row.names(PhytoGenus)<-paste(PhytoGenus$YearCollected,"_",
+                                PhytoGenus$MonthCollected,"_",
+                                PhytoGenus$DayCollected,sep="")
+phsp<-PhytoGenus[,-c((1:20),length(PhytoGenus[1,]))]
+phsp<-sqrt(sqrt(phsp))
+################################################################################
+################  PCA  #########################################################
+################################################################################
+pca_phsp<-dudi.pca(phsp,scannf=F,nf=2)
+#############  diagnostic plots  ###############################################
+scatter(pca_phsp)
+xy<-data.frame(yr=as.factor(PhytoGenus$YearCollected),
+               ax1=pca_phsp$li[,1],ax2=pca_phsp$li[,2])
+boxplot(ax1~yr,xy)
+boxplot(ax2~yr,xy)
+#############  plot of axis scores versus time  ################################
+ss<-as.Date(PhytoGenus$datecollected)
+plot(ss,pca_phsp$li[,1],type="l")
+lines(ss,pca_phsp$li[,2],type="l",col='red')
+#############  classification plots of PCA, using year and month to classify ###
+s.class(pca_phsp$li, as.factor(PhytoGenus$MonthCollected), cpoint = 0,
+        clabel=0.5,cstar=0,cellipse=0.3,col=rep('blue',12),
+        xlim=c(-3.5,1.5),ylim=c(-3.5,3.5))
+s.class(pca_phsp$li, as.factor(PhytoGenus$YearCollected), cpoint = 0,clabel=0.5,
+        cstar=0,cellipse=0.3,add.plot=T,col=rep('red',27))
+################################################################################
+######  insert taxonomic information, to finally derive the genus names 
+######  for display
+################################################################################
+txtr<-txtr[,-c(1,3)] # remove aphiaidaccepted and displayName
+txtr<-unique(txtr)
+spsel<-names(phsp)
+spseldf<-data.frame(displayGenus=as.character(spsel))
+spseldf<-merge(spseldf,txtr,by='displayGenus',all.x=T,all.y=F)
+spseldf$displayGenus<-as.character(spseldf$displayGenus)
+################################################################################
+## calculate yearly and monthly mean scores on first two axes
+## and store in data frame
+################################################################################
+mnsax1<-as.vector(by(pca_phsp$li[,1],PhytoGenus$YearCollected,mean))
+mnsax2<-as.vector(by(pca_phsp$li[,2],PhytoGenus$YearCollected,mean))
+mmnsax1<-as.vector(by(pca_phsp$li[,1],PhytoGenus$MonthCollected,mean))
+mmnsax2<-as.vector(by(pca_phsp$li[,2],PhytoGenus$MonthCollected,mean))
+yrmns<-data.frame(ax1=mnsax1,ax2=mnsax2,labs=as.character(1986:2012))
+momns<-data.frame(ax1=mmnsax1,ax2=mmnsax2,labs=as.character(1:12))
+spseldf$ax1<-pca_phsp$co[,1]
+spseldf$ax2<-pca_phsp$co[,2]
+################################################################################
+############ save calculation results for use in shiny application ############
+################################################################################
+save(yrmns,momns,spseldf,file="multivGenus.Rdata")
+################################################################################
+################  Done  ########################################################
+################################################################################
+```
+
+## Shiny application
+The following code is used for the Shiny application. The code is not dynamically run in this Markdown file, as it requires its own environment. However, the source files are available on the Github site.
+
+A Shiny application requires three source files: ui.r, server.r and helper.r. The latter contains user-defined routines called by the other files. We give the code for these three files in the following code chunks.
+
+The content of the source files will be recognizable if one inspects the product. We refer to the Shiny manuals for details about the construction of these source files.
+
+### ui.R
+
+```{r ui,eval=FALSE}
+library(shiny)
+shinyUI(fluidPage(
+  titlePanel("LTER North Adriatic plankton series"),
+  fluidRow(
+    column(4,
+           wellPanel(
+             selectInput(inputId   = "set1", 
+                         label     = "Currently restricted to Phytoplankton",
+                         choices   = c("Phytoplankton"), 
+                         selected  = "Phytoplankton"),
+             selectInput(inputId   = "spec.set1", 
+                         label     = "Choose a species (group)",
+                         choices   = "",
+                         selected  = "Bacillariophyceae"),
+             br(),
+             checkboxInput(inputId = "transform",
+                           label   = strong("value double sqrt transformed"),
+                           value   = TRUE) 
+             )
+    ),
+    column(8,
+           tabsetPanel(
+             tabPanel("Observations", 
+                      plotOutput("plot1", height ="375px", width = "100%"),
+                      plotOutput("plot4", height ="375px", width = "100%")),
+             tabPanel("Multiv 1",
+                      plotOutput("plM1", height ="700px", width = "100%")),
+             tabPanel("about",
+                      htmlOutput("about"))
+          )
+           
+    )
+  )
+))
+```
+
+### server.R
+
+```{r server,eval=FALSE}
+library(shiny)
+source("helper.R")
+shinyServer(function(input, output,session) {
+# the data used - updated whenever a new selection
+        outVar1 = reactive({
+            mydata = get(input$set1)
+            names(mydata)[6:(length(mydata[1,]))]
+            })
+        observe({
+            updateSelectInput(session, "spec.set1",choices = outVar1()
+            )})
+        output$plot1 <- renderPlot({
+            plotspecs(input$set1,input$spec.set1,input$transform)
+        }) 
+        output$plot4 <- renderPlot({
+            plotseas(input$set1,input$spec.set1,input$transform)
+        }) 
+        output$plM1 <- renderPlot({
+            plotmultv(input$set1,input$spec.set1)
+        })
+        output$about <- renderUI({
+            doc 
+        })
+})
+```
+
+### helper.R
+
+This is the user-supplied helper code. It contains, in this application, the code for the different plots. These depend on the binary files.
+
+```{r helper, eval=FALSE}
+load("PhytoGenus.Rdata")
+Phytoplankton=PhytoGenus
+load("multivGenus.Rdata")
+doc<-HTML(readLines('about.html'))
+
+ldc<-5
+
+plotspecs<-function(datset,species,transf){
+  tt<-get(datset)
+  if(species=="")species<-names(tt)[6]
+  if(!species%in%names(tt))species<-names(tt)[6]
+  ttt<-data.frame(y=tt[,'YearCollected'],sp=tt[,species])
+  if(transf) ttt$sp<-sqrt(sqrt(ttt$sp))
+  miy<-min(ttt$y)
+  may<-max(ttt$y)
+  boxplot(sp~y,data=ttt,main=species,ylab='abundance',outline=T,
+          xlim=c(1,27),at=(miy-1985):(may-1985),
+          col=c(rep('lightgray',17),rep('darkgray',10)))
+}
+plotseas<-function(datset,species,transf){
+  tt<-get(datset)
+  if(species=="")species<-names(tt)[6]
+  if(!species%in%names(tt))species<-names(tt)[6]
+  ttt<-data.frame(m=tt[,'MonthCollected'],sp=tt[,species])
+  if(transf) ttt$sp<-sqrt(sqrt(ttt$sp))
+  miy<-min(ttt$m)
+  may<-max(ttt$m)
+  boxplot(sp~m,data=ttt,main=species,ylab='abundance',outline=T,
+          xlim=c(1,12),at=miy:may)
+}
+
+
+plotmultv<-function (datset,specname){
+  if (datset=="Phytoplankton"){
+    par(pty="s")
+    plot(yrmns$ax1,yrmns$ax2,col='red',xlim=c(-8,4),ylim=c(-2,2),
+         type="l",asp=1,xlab="",ylab="",axes=FALSE,frame.plot=TRUE,
+         main=paste("PCA biplot,",specname,"in green"))
+    Axis(side=1, labels=FALSE)
+    Axis(side=2, labels=FALSE)
+    abline(h=0)
+    abline(v=0)
+    colv<-rep('lightgray',80)
+    lwdv<-rep(0.1,80)
+    if(!specname%in%spseldf$displayGenus){
+      colv[which(spseldf$displayClass==specname)]<-'green'
+      lwdv[which(spseldf$displayClass==specname)]<-2
+    }
+    arrows(0,0,spseldf$ax1*5,spseldf$ax2*5,col=colv,lwd=lwdv,code=0)
+    if(specname%in%spseldf$displayGenus){
+      spec=which(spseldf$displayGenus==specname)
+      arrows(0,0,spseldf$ax1[spec]*5,spseldf$ax2[spec]*5,col="green",
+             lwd=3,code=0)
+      points(spseldf$ax1[spec]*5,spseldf$ax2[spec]*5,col="green",
+             cex=2,pch=16)
+    }
+    text(yrmns$ax1,yrmns$ax2,yrmns$labs,col='red')
+    lines(momns$ax1,momns$ax2,col='blue')
+    text(momns$ax1,momns$ax2,momns$labs,col='blue')
+    arrows(3,4,-7,4,col='red',lwd=2,code=2)
+    text(-5,4.5,'Trend',col='red',cex=1)
+    arrows(3.5,-3,3.5,3,col='blue',lwd=2,code=3)
+    text(3.5,3.5,'Season',col='blue',cex=1)
+  }else{
+    frame()
+  }
+}
+```
+
